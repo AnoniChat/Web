@@ -14,7 +14,7 @@ RUN \
   if [ -f yarn.lock ]; then \
     yarn install --frozen-lockfile --network-timeout 300000; \
   elif [ -f package-lock.json ]; then \
-    npm ci --only=production --ignore-scripts --no-audit --cache /tmp/.npm-cache; \
+    npm ci --ignore-scripts --no-audit --cache /tmp/.npm-cache; \
   elif [ -f pnpm-lock.yaml ]; then \
     yarn global add pnpm && pnpm i --frozen-lockfile; \
   else \
@@ -28,13 +28,13 @@ WORKDIR /app
 # 설치된 의존성 복사 (캐시 재사용)
 COPY --from=deps /app/node_modules ./node_modules
 
-# 🎯 소스 코드는 마지막에 복사
+# 소스 코드는 마지막에 복사
 COPY . .
 
 # Next.js telemetry 비활성화
 ENV NEXT_TELEMETRY_DISABLED=1
 
-#  빌드 (코드 변경 시만 재실행)
+# 빌드 (코드 변경 시만 재실행)
 RUN npm run build
 
 # Production image, copy all the files and run next
