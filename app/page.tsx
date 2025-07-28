@@ -55,7 +55,7 @@ export default function HomePage() {
           // 채팅방으로 이동
           window.location.href = `/chat?roomId=${data.roomId}&category=${encodeURIComponent(activeCategory.displayName)}`;
         } else {
-          alert(data.message || '채팅 시작에 실패했습니다.');
+          alert(data.message || '채팅 시작 실패했습니다.');
         }
       } else {
         const errorData = await response.json();

@@ -1,32 +1,40 @@
-# React (Next.js) Dockerfile - 간단한 버전
+# React (Next.js) Dockerfile - Docker Layer 캐싱 최적화
 FROM node:22-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
-# libc6-compat는 Alpine Linux에서 Node.js 호환성을 위해 필요
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Install dependencies based on the preferred package manager
+# 의존성 파일만 먼저 복사 (캐시 레이어)
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* ./
+
+# 의존성 설치 (이 레이어는 의존성 변경 시만 재빌드됨)
 RUN \
-  if [ -f yarn.lock ]; then yarn --frozen-lockfile; \
-  elif [ -f package-lock.json ]; then npm ci; \
-  elif [ -f pnpm-lock.yaml ]; then yarn global add pnpm && pnpm i --frozen-lockfile; \
-  else echo "Lockfile not found." && exit 1; \
+  if [ -f yarn.lock ]; then \
+    yarn install --frozen-lockfile --network-timeout 300000; \
+  elif [ -f package-lock.json ]; then \
+    npm ci --only=production --ignore-scripts --no-audit --cache /tmp/.npm-cache; \
+  elif [ -f pnpm-lock.yaml ]; then \
+    yarn global add pnpm && pnpm i --frozen-lockfile; \
+  else \
+    echo "Lockfile not found." && exit 1; \
   fi
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
+
+# 설치된 의존성 복사 (캐시 재사용)
 COPY --from=deps /app/node_modules ./node_modules
+
+# 🎯 소스 코드는 마지막에 복사
 COPY . .
 
-# Next.js collects completely anonymous telemetry data about general usage.
-# Learn more here: https://nextjs.org/telemetry
+# Next.js telemetry 비활성화
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Build application
+#  빌드 (코드 변경 시만 재실행)
 RUN npm run build
 
 # Production image, copy all the files and run next
@@ -36,10 +44,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# 필요한 파일만 선별적으로 복사
 COPY --from=builder /app/public ./public
-
-# Automatically leverage output traces to reduce image size
-# https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
@@ -48,6 +54,4 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# server.js is created by next build from the standalone output
-# https://nextjs.org/docs/pages/api-reference/next-config-js/output
 CMD ["node", "server.js"]
