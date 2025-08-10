@@ -1,5 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: {
+    // CSS-in-JS hydration 문제 해결
+    optimizeCss: true,
+  },
+  // 또는 이것도 시도
+  compiler: {
+    styledComponents: true, // styled-components 사용 시
+  },
   // Standalone 모드 활성화 (Docker 최적화) - 필수!
   output: 'standalone',
   

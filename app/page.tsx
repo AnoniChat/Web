@@ -5,6 +5,9 @@ import { useState } from 'react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
+import MatchingQueue from './components/MatchingQueue';
+
+type Screen = 'main' | 'matching' | 'chat';
 
 // 카테고리 타입 정의
 interface Category {
@@ -12,6 +15,13 @@ interface Category {
   name: string;
   icon: string;
   displayName: string;
+}
+
+interface AppState {
+  currentScreen: Screen;
+  selectedCategory: Category | null;
+  roomId: string | null;
+  queueSize: number;
 }
 
 // 카테고리 데이터
@@ -28,6 +38,12 @@ const categories: Category[] = [
 export default function HomePage() {
   // 활성 카테고리 상태 관리
   const [activeCategory, setActiveCategory] = useState<Category>(categories[0]);
+  const [appState, setAppState] = useState<AppState>({
+    currentScreen: 'main',
+    selectedCategory: null,
+    roomId: null,
+    queueSize: 0
+  });
 
   // 카테고리 클릭 핸들러
   const handleCategoryClick = (category: Category) => {
@@ -35,37 +51,113 @@ export default function HomePage() {
   };
 
   // 채팅 시작 핸들러
-  const handleStartChat = async () => {
+const handleStartChat = async () => {
+  try {
+    setAppState({
+      currentScreen: 'matching',
+      selectedCategory: activeCategory,
+      roomId: null,
+      queueSize:0
+    });
+
+    // 대기열 등록
+    const response = await fetch('/api/matching/queue', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        category: activeCategory.id,
+      }),
+    });
+  
+
+    if (!response.ok) {
+      throw new Error('대기열 등록 실패');
+    }
+
+    const data = await response.json();
+
+        setAppState(prev => ({
+      ...prev,
+      queueSize: data.queueSize || 0
+    }));
+    
+    // 2단계: 매칭 상태 모니터링 시작
+    startMatchingMonitoring();
+
+  } catch (error) {
+    console.error('대기열 등록 오류:', error);
+    handleBackToMain();
+  }
+};
+
+const startMatchingMonitoring = () => {
+  const checkMatching = async () => {
     try {
-      // 백엔드 API 호출
-      const response = await fetch('/api/chat/start', {
-        method: 'POST',
+      const response = await fetch('/api/matching/status', {
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          category: activeCategory.id,
-        }),
+        category: activeCategory.id,
+      }),
       });
 
       if (response.ok) {
         const data = await response.json();
         
-        if (data.success && data.roomId) {
-          // 채팅방으로 이동
-          window.location.href = `/chat?roomId=${data.roomId}&category=${encodeURIComponent(activeCategory.displayName)}`;
-        } else {
-          alert(data.message || '채팅 시작에 실패했습니다.');
+        if (data.status === 'MATCHED') {
+          handleMatchFound(data.roomId);
+        } else if (data.status === 'WAITING') {
+          setAppState(prev => ({
+            ...prev,
+            queueSize: data.queueSize || 0
+          }));
+          
+          console.log('현재 대기 인원:', data.queueSize);
+          setTimeout(checkMatching, 3000);
         }
-      } else {
-        const errorData = await response.json();
-        alert(errorData.message || '채팅 시작에 실패했습니다. 다시 시도해주세요.');
       }
     } catch (error) {
-      console.error('채팅 시작 오류:', error);
-      alert('네트워크 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+      console.error('매칭 상태 확인 오류:', error);
+      setTimeout(checkMatching, 5000);
     }
   };
+
+  checkMatching();
+};
+
+  const handleMatchFound = (roomId?: string) => {
+    console.log('매칭 완료! 방 ID:', roomId);
+    
+    setAppState(prev => ({
+      ...prev,
+      currentScreen: 'chat',
+      roomId: roomId || `room_${Date.now()}`
+    }));
+  };
+
+  const handleBackToMain = () => {
+    setAppState({
+      currentScreen: 'main',
+      selectedCategory: null,
+      roomId: null,
+      queueSize: 0
+    });
+  };
+
+  // 매칭 화면
+  if (appState.currentScreen === 'matching') {
+    return (
+      <MatchingQueue
+        onCancel={handleBackToMain}
+        onMatchFound={handleMatchFound}
+        queueSize={appState.queueSize}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-500 via-purple-500 to-indigo-600">
