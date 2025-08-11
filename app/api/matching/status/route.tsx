@@ -3,8 +3,10 @@ import { NextRequest, NextResponse } from 'next/server';
 // GET /api/chat/status
 export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url);
+    const category = searchParams.get('category');
     // 백엔드 Spring Boot API 호출
-    const backendResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/matching/status`, {
+    const backendResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/matching/status?category=${category}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json'

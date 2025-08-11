@@ -6,15 +6,6 @@ interface QueueRequest {
   category: string;
 }
 
-// 응답 타입 정의
-interface ChatStartResponse {
-  success: boolean;
-  roomId?: string;
-  message?: string;
-  queuePosition?: number;
-  estimatedWaitTime?: number;
-}
-
 // POST 요청 핸들러 (Spring Boot의 @PostMapping과 동일)
 export async function POST(request: NextRequest) {
   try {
@@ -101,20 +92,4 @@ function getClientIP(request: NextRequest): string {
   
  
   return process.env.NODE_ENV === 'development' ? '127.0.0.1' : 'unknown';
-}
-
-// 유틸리티 함수들
-function generateRoomId(category: string): string {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${category}_${timestamp}_${random}`;
-}
-
-function generateGuestId(): string {
-  return `guest_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-}
-
-// 서버 토큰 가져오기 (실제 환경에서는 환경변수에서)
-function getServerToken(): string {
-  return process.env.SERVER_API_TOKEN || 'default-token';
 }

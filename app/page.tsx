@@ -95,14 +95,11 @@ const handleStartChat = async () => {
 const startMatchingMonitoring = () => {
   const checkMatching = async () => {
     try {
-      const response = await fetch('/api/matching/status', {
+      const response = await fetch('/api/matching/status?category=${activeCategory.id}', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-        category: activeCategory.id,
-      }),
       });
 
       if (response.ok) {

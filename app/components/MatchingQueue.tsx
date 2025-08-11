@@ -18,11 +18,6 @@ const MatchingQueue: React.FC<MatchingQueueProps> = ({ onCancel, onMatchFound, q
   const [queueCount, setQueueCount] = useState<number>(queueSize);
   const [progress, setProgress] = useState<number>(0);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
-  const [queueStatus, setQueueStatus] = useState<QueueStatus>({
-    count: queueSize,
-    estimatedTime: 180, // 3분
-    averageWaitTime: '2-3분'
-  });
 
   // 경과 시간을 mm:ss 형태로 포맷
   const formatTime = useCallback((seconds: number): string => {
