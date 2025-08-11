@@ -7,13 +7,6 @@ interface MatchingQueueProps {
   queueSize: number;
 }
 
-// 대기열 상태 타입
-interface QueueStatus {
-  count: number;
-  estimatedTime: number;
-  averageWaitTime: string;
-}
-
 const MatchingQueue: React.FC<MatchingQueueProps> = ({ onCancel, onMatchFound, queueSize }) => {
   const [queueCount, setQueueCount] = useState<number>(queueSize);
   const [progress, setProgress] = useState<number>(0);
@@ -39,50 +32,17 @@ const MatchingQueue: React.FC<MatchingQueueProps> = ({ onCancel, onMatchFound, q
   }, [onCancel]);
 
   useEffect(() => {
-    let queueInterval: NodeJS.Timeout;
-    let progressInterval: NodeJS.Timeout;
-    let timeInterval: NodeJS.Timeout;
-    let matchTimeout: NodeJS.Timeout;
-
-    // 대기열 숫자 애니메이션 (3초마다 변화)
-    queueInterval = setInterval(() => {
-      const change = Math.floor(Math.random() * 3) + 1;
-      const increase = Math.random() > 0.6; // 40% 확률로 감소, 60% 확률로 증가
-      
-      setQueueCount(prev => {
-        if (increase) {
-          return prev + change;
-        } else {
-          return Math.max(1, prev - change);
-        }
-      });
-    }, 3000);
-
-    // 진행바 애니메이션 (부드럽게 증가)
-    progressInterval = setInterval(() => {
-      setProgress(prev => (prev >= 100 ? 0 : prev + 1));
-    }, 150);
-
-    // 경과 시간 카운터
-    timeInterval = setInterval(() => {
-      setElapsedTime(prev => prev + 1);
-    }, 1000);
-
-    // 5-15초 후 매칭 완료 시뮬레이션
-    matchTimeout = setTimeout(() => {
-      const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      onMatchFound(roomId);
-    }, Math.random() * 10000 + 5000);
+  // 경과 시간 카운터
+  const timeInterval = setInterval(() => {
+    setElapsedTime(prev => prev + 1);
+  }, 1000);
 
     // ESC 키 이벤트 리스너
     document.addEventListener('keydown', handleKeyDown);
 
     // 클린업 함수
     return () => {
-      clearInterval(queueInterval);
-      clearInterval(progressInterval);
       clearInterval(timeInterval);
-      clearTimeout(matchTimeout);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [onMatchFound, handleKeyDown]);
@@ -164,17 +124,6 @@ const MatchingQueue: React.FC<MatchingQueueProps> = ({ onCancel, onMatchFound, q
         {/* 상태 메시지 */}
         <div className="text-gray-600 text-sm mb-6">
           최적의 상대를 찾고 있습니다...
-        </div>
-
-        {/* 진행바 */}
-        <div className="absolute bottom-0 left-0 right-0 h-2 bg-purple-100 rounded-b-3xl overflow-hidden">
-          <div 
-            className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-purple-600 transition-all duration-300 ease-out relative"
-            style={{ width: `${progress}%` }}
-          >
-            {/* 진행바 글로우 효과 */}
-            <div className="absolute inset-0 bg-white opacity-30 animate-pulse" />
-          </div>
         </div>
 
         {/* 펄스 효과 (매칭 중임을 강조) */}
