@@ -8,8 +8,6 @@ interface MatchingQueueProps {
 }
 
 const MatchingQueue: React.FC<MatchingQueueProps> = ({ onCancel, onMatchFound, queueSize }) => {
-  const [queueCount, setQueueCount] = useState<number>(queueSize);
-  const [progress, setProgress] = useState<number>(0);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
 
   // 경과 시간을 mm:ss 형태로 포맷
@@ -114,7 +112,7 @@ const MatchingQueue: React.FC<MatchingQueueProps> = ({ onCancel, onMatchFound, q
             <div className="text-gray-600 mb-3 font-medium">현재 대기열</div>
             <div className="flex items-center justify-center">
               <span className="text-5xl font-bold text-purple-600 tracking-tight drop-shadow-sm">
-                {queueCount.toString()}
+                {queueSize.toString()}
               </span>
               <span className="text-xl text-gray-500 ml-3 font-medium">명</span>
             </div>
