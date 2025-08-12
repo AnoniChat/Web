@@ -1,4 +1,3 @@
-// app/api/chat/start/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 // 요청 바디 타입 정의

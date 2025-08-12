@@ -136,14 +136,30 @@ const startMatchingMonitoring = () => {
     }));
   };
 
-  const handleBackToMain = () => {
+const handleBackToMain = async () => {
+  try {
+    const response = await fetch(`/api/matching/cancel?category=${activeCategory.id}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('대기열 취소 실패');
+    }
+
     setAppState({
       currentScreen: 'main',
       selectedCategory: null,
       roomId: null,
       queueSize: 0
     });
-  };
+    
+  } catch (error) {
+    console.error('매칭 취소 중 오류 발생:', error);
+  }
+};
 
   // 매칭 화면
   if (appState.currentScreen === 'matching') {
