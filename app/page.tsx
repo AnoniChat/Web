@@ -1,11 +1,12 @@
-// app/page.tsx
 'use client';
-
+import api from '@/utils/api';
+import { useRef } from 'react';
 import { useState } from 'react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import MatchingQueue from './components/MatchingQueue';
+import ChatRoom from './components/Chatroom';
 
 type Screen = 'main' | 'matching' | 'chat';
 
@@ -36,6 +37,7 @@ const categories: Category[] = [
 ];
 
 export default function HomePage() {
+  const matchingTimerRef = useRef<NodeJS.Timeout | null>(null);
   // 활성 카테고리 상태 관리
   const [activeCategory, setActiveCategory] = useState<Category>(categories[0]);
   const [appState, setAppState] = useState<AppState>({
@@ -61,26 +63,14 @@ const handleStartChat = async () => {
     });
 
     // 대기열 등록
-    const response = await fetch('/api/matching/queue', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        category: activeCategory.id,
-      }),
+    const response = await api.post('/matching/queue', {
+      category: activeCategory.id,
     });
   
 
-    if (!response.ok) {
-      throw new Error('대기열 등록 실패');
-    }
-
-    const data = await response.json();
-
         setAppState(prev => ({
       ...prev,
-      queueSize: data.queueSize || 0
+      queueSize: response.data.queueSize || 0
     }));
     
     // 2단계: 매칭 상태 모니터링 시작
@@ -95,31 +85,33 @@ const handleStartChat = async () => {
 const startMatchingMonitoring = () => {
   const checkMatching = async () => {
     try {
-      const response = await fetch('/api/matching/status?category=${activeCategory.id}', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      const response = await api.get('/matching/status', {
+        params: {
+          category: activeCategory.id
+        }
       });
 
-      if (response.ok) {
-        const data = await response.json();
+      const data = response.data;
+
+      console.log('매칭 상태 응답:', data);
+      console.log('status 값:', data.status);
+      console.log('status 타입:', typeof data.status);
+      
+      if (data.status === 'MATCHED') {
+        handleMatchFound(data.roomId);
+      } else if (data.status === 'WAITING') {
+        setAppState(prev => ({
+          ...prev,
+          queueSize: data.queueSize || 0
+        }));
         
-        if (data.status === 'MATCHED') {
-          handleMatchFound(data.roomId);
-        } else if (data.status === 'WAITING') {
-          setAppState(prev => ({
-            ...prev,
-            queueSize: data.queueSize || 0
-          }));
-          
-          console.log('현재 대기 인원:', data.queueSize);
-          setTimeout(checkMatching, 3000);
-        }
+        console.log('현재 대기 인원:', data.queueSize);
+        matchingTimerRef.current = setTimeout(checkMatching, 3000);
       }
+      
     } catch (error) {
       console.error('매칭 상태 확인 오류:', error);
-      setTimeout(checkMatching, 5000);
+      matchingTimerRef.current = setTimeout(checkMatching, 5000);
     }
   };
 
@@ -137,27 +129,30 @@ const startMatchingMonitoring = () => {
   };
 
 const handleBackToMain = async () => {
+  if (matchingTimerRef.current) {
+      clearTimeout(matchingTimerRef.current);
+      matchingTimerRef.current = null;
+      console.log('매칭 모니터링 중지');
+  }
+
   try {
-    const response = await fetch(`/api/matching/cancel?category=${activeCategory.id}`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+    const response = await api.delete('/matching/cancel', {
+      params: {
+        category: activeCategory.id
+      }
     });
+    console.log('매칭 취소 성공:', response.data);
+    
+  } catch (error) {
+    console.error('매칭 취소 중 오류 발생:', error);
 
-    if (!response.ok) {
-      throw new Error('대기열 취소 실패');
-    }
-
+  } finally {
     setAppState({
       currentScreen: 'main',
       selectedCategory: null,
       roomId: null,
       queueSize: 0
     });
-    
-  } catch (error) {
-    console.error('매칭 취소 중 오류 발생:', error);
   }
 };
 
@@ -172,12 +167,22 @@ const handleBackToMain = async () => {
     );
   }
 
+    if (appState.currentScreen === 'chat' && appState.roomId && appState.selectedCategory) {
+    return (
+      <ChatRoom
+        roomId={appState.roomId}
+        category={appState.selectedCategory}
+        onExit={handleBackToMain}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-500 via-purple-500 to-indigo-600">
       {/* 헤더 컴포넌트 */}
       <Header />
 
-      <div className="flex min-h-screen pt-20">
+      <div className="flex flex-row h-screen pt-20">
         {/* 사이드바 컴포넌트 */}
         <Sidebar 
           categories={categories}
@@ -191,37 +196,6 @@ const handleBackToMain = async () => {
           onStartChat={handleStartChat}
         />
       </div>
-
-      {/* 모바일 반응형을 위한 스타일 */}
-      <style jsx>{`
-        @keyframes fade-in-up {
-          from {
-            opacity: 0;
-            transform: translateY(30px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        .animate-fade-in-up {
-          animation: fade-in-up 0.8s ease-out;
-        }
-        
-        @media (max-width: 768px) {
-          .flex {
-            flex-direction: column;
-          }
-          aside {
-            width: 100%;
-            order: 2;
-          }
-          main {
-            order: 1;
-            padding: 1.5rem;
-          }
-        }
-      `}</style>
     </div>
   );
 }
