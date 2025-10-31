@@ -55,7 +55,7 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
   const connectWebSocket = () => {
     try {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.hostname}:8080/chat`;
+      const wsUrl = `${wsProtocol}//${window.location.hostname}/chat`;
       
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
