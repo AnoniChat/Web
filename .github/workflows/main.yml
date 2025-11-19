@@ -5,6 +5,7 @@ on:
     branches: [ prod ]
   pull_request:
     branches: [ prod ]
+  workflow_dispatch:   
 
 env:
   DOCKER_IMAGE: ghcr.io/anonichat/web/react-app
