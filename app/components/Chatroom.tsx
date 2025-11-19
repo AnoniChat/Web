@@ -158,12 +158,12 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
       };
 
       ws.onerror = (error) => {
-        console.error('❌ WebSocket 에러:', error);
+        console.error('WebSocket 에러:', error);
         setConnectionStatus('disconnected');
       };
 
       ws.onclose = (event) => {
-        console.log('❌ WebSocket 연결 종료:', event.code, event.reason);
+        console.log('WebSocket 연결 종료:', event.code, event.reason);
         setConnectionStatus('disconnected');
         wsRef.current = null;
 
@@ -190,7 +190,7 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
     }
   };
 
-  // 🔥 모바일 최적화: 연결 상태 확인 및 재연결
+  // 모바일 최적화: 연결 상태 확인 및 재연결
   const checkConnectionHealth = () => {
     // 마지막 활동으로부터 1분 이상 지났고 연결이 끊어진 경우
     const timeSinceLastActivity = Date.now() - lastActivityRef.current;
