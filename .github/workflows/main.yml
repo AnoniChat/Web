@@ -9,7 +9,7 @@ on:
 env:
   DOCKER_IMAGE: ghcr.io/anonichat/web/react-app
   CONTAINER_NAME: anonichat-frontend
-  WORKING_DIR: frontend
+  # WORKING_DIR 제거!
 
 jobs:
   build-and-deploy:
@@ -24,17 +24,16 @@ jobs:
     - name: 📂 Checkout code
       uses: actions/checkout@v4
 
-    # 2. Node.js 설정
+    # 2. Node.js 설정 (캐시 경로 수정)
     - name: 🟢 Set up Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '22'
         cache: 'npm'
-        cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+        cache-dependency-path: 'package-lock.json'  # ⭐ 수정!
 
-    # 3. 의존성 설치 및 린트 검사
+    # 3. 의존성 설치 및 린트 검사 (working-directory 제거)
     - name: 📦 Install dependencies
-      working-directory: ${{ env.WORKING_DIR }}
       run: |
         npm ci
         npm run lint || echo "⚠️ Lint 경고가 있지만 계속 진행합니다."
@@ -57,11 +56,11 @@ jobs:
           type=raw,value=latest
           type=sha,prefix={{branch}}-
 
-    # 6. Docker 이미지 빌드 및 푸시
+    # 6. Docker 이미지 빌드 및 푸시 (context 수정)
     - name: 🐳 Build and push Docker image
       uses: docker/build-push-action@v5
       with:
-        context: ${{ env.WORKING_DIR }}
+        context: .  # ⭐ 수정! (frontend → .)
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
