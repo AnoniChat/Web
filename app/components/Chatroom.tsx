@@ -21,7 +21,7 @@ interface ChatRoomProps {
 
 // WebSocket 메시지 타입 정의
 interface WebSocketMessage {
-  type: 'JOIN' | 'MESSAGE' | 'EXIT' | 'DISCONNECT' | 'ERROR';
+  type: 'JOIN' | 'MESSAGE' | 'EXIT' | 'DISCONNECT' | 'ERROR' | 'HEARTBEAT';
   roomId?: string;
   content?: string;
   messageId?: string;
@@ -41,6 +41,11 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
+  
+  // 모바일 최적화: Heartbeat 추가
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isManualDisconnectRef = useRef(false);
+  const lastActivityRef = useRef<number>(Date.now());
 
   // 메시지 자동 스크롤
   const scrollToBottom = () => {
@@ -51,8 +56,40 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
     scrollToBottom();
   }, [messages]);
 
+  // 모바일 최적화: Heartbeat 시작
+  const startHeartbeat = () => {
+    // 기존 heartbeat가 있다면 정리
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+    }
+
+    heartbeatIntervalRef.current = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        const heartbeatMessage: WebSocketMessage = {
+          type: 'HEARTBEAT',
+          roomId: roomId
+        };
+        wsRef.current.send(JSON.stringify(heartbeatMessage));
+        lastActivityRef.current = Date.now();
+      }
+    }, 25000); // 25초마다 heartbeat 전송
+  };
+
+  // 모바일 최적화: Heartbeat 중지
+  const stopHeartbeat = () => {
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+  };
+
   // WebSocket 연결 함수
   const connectWebSocket = () => {
+    // 수동 종료 상태면 연결하지 않음
+    if (isManualDisconnectRef.current) {
+      return;
+    }
+
     try {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${wsProtocol}//${window.location.hostname}/chat`;
@@ -61,10 +98,11 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('WebSocket 연결됨');
+        console.log('✅ WebSocket 연결됨');
         setConnectionStatus('connected');
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
+        lastActivityRef.current = Date.now();
 
         // 채팅방 입장 메시지 전송
         const joinMessage: WebSocketMessage = {
@@ -72,11 +110,15 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
           roomId: roomId
         };
         ws.send(JSON.stringify(joinMessage));
+
+        // 모바일 최적화: Heartbeat 시작
+        startHeartbeat();
       };
 
       ws.onmessage = (event) => {
         try {
           const data: WebSocketMessage = JSON.parse(event.data);
+          lastActivityRef.current = Date.now();
           
           switch (data.type) {
             case 'MESSAGE':
@@ -98,6 +140,11 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
               console.log('상대방이 채팅방을 나갔습니다');
               break;
 
+            // 모바일 최적화: Heartbeat 응답 처리
+            case 'HEARTBEAT':
+              // Heartbeat 응답 수신 (연결 유지 확인)
+              break;
+
             case 'ERROR':
               console.error('WebSocket 에러:', data.content);
               break;
@@ -111,25 +158,28 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
       };
 
       ws.onerror = (error) => {
-        console.error('WebSocket 에러:', error);
+        console.error('❌ WebSocket 에러:', error);
         setConnectionStatus('disconnected');
       };
 
       ws.onclose = (event) => {
-        console.log('WebSocket 연결 종료:', event.code, event.reason);
+        console.log('❌ WebSocket 연결 종료:', event.code, event.reason);
         setConnectionStatus('disconnected');
         wsRef.current = null;
 
-        // 비정상 종료 시 재연결 시도
-        if (event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
+        // 모바일 최적화: Heartbeat 중지
+        stopHeartbeat();
+
+        // 수동 종료가 아니고 비정상 종료 시 재연결 시도
+        if (!isManualDisconnectRef.current && event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current += 1;
-          console.log(`재연결 시도 ${reconnectAttemptsRef.current}/${maxReconnectAttempts}`);
+          console.log(`🔄 재연결 시도 ${reconnectAttemptsRef.current}/${maxReconnectAttempts}`);
           
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
           }, 3000 * reconnectAttemptsRef.current); // 점진적 지연
         } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-          console.error('최대 재연결 시도 횟수 초과');
+          console.error('⚠️ 최대 재연결 시도 횟수 초과');
           setIsConnected(false);
         }
       };
@@ -140,18 +190,123 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
     }
   };
 
-  // WebSocket 연결 초기화
+  // 🔥 모바일 최적화: 연결 상태 확인 및 재연결
+  const checkConnectionHealth = () => {
+    // 마지막 활동으로부터 1분 이상 지났고 연결이 끊어진 경우
+    const timeSinceLastActivity = Date.now() - lastActivityRef.current;
+    if (timeSinceLastActivity > 60000 && wsRef.current?.readyState !== WebSocket.OPEN) {
+      console.log('🔄 비활성 감지, 재연결 시도');
+      connectWebSocket();
+    }
+  };
+
+  // WebSocket 연결 초기화 및 모바일 이벤트 리스너
   useEffect(() => {
+    isManualDisconnectRef.current = false;
     connectWebSocket();
+
+    // 모바일 최적화: Visibility API - 백그라운드 감지
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('📱 앱이 다시 활성화됨 (Foreground)');
+        // 연결이 끊겼으면 재연결
+        if (wsRef.current?.readyState !== WebSocket.OPEN) {
+          reconnectAttemptsRef.current = 0; // 재연결 시도 횟수 초기화
+          connectWebSocket();
+        } else {
+          // 연결은 되어있지만 heartbeat 재시작
+          startHeartbeat();
+        }
+        checkConnectionHealth();
+      } else {
+        console.log('📱 앱이 백그라운드로 전환됨');
+        // 백그라운드에서는 heartbeat 중지 (배터리 절약)
+        stopHeartbeat();
+      }
+    };
+
+    // 🔥 모바일 최적화: 네트워크 상태 감지
+    const handleOnline = () => {
+      console.log('🌐 네트워크 복구됨');
+      if (wsRef.current?.readyState !== WebSocket.OPEN) {
+        reconnectAttemptsRef.current = 0;
+        connectWebSocket();
+      }
+    };
+
+    const handleOffline = () => {
+      console.log('📡 네트워크 끊김');
+      setConnectionStatus('disconnected');
+    };
+
+    // 🔥 모바일 최적화: 포커스 이벤트 (브라우저 탭 전환)
+    const handleFocus = () => {
+      console.log('👁️ 포커스 복원');
+      if (wsRef.current?.readyState !== WebSocket.OPEN) {
+        connectWebSocket();
+      }
+      checkConnectionHealth();
+    };
+
+    const handleBlur = () => {
+      console.log('👁️ 포커스 손실');
+      // 포커스를 잃으면 heartbeat 중지
+      stopHeartbeat();
+    };
+
+    // 🔥 모바일 최적화: 페이지 언로드 전 정리
+    const handleBeforeUnload = () => {
+      isManualDisconnectRef.current = true;
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        const exitMessage: WebSocketMessage = {
+          type: 'EXIT',
+          roomId: roomId
+        };
+        wsRef.current.send(JSON.stringify(exitMessage));
+      }
+    };
+
+    // 이벤트 리스너 등록
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    // 🔥 모바일 최적화: 주기적 연결 상태 체크
+    const healthCheckInterval = setInterval(checkConnectionHealth, 30000); // 30초마다
 
     // 컴포넌트 언마운트 시 정리
     return () => {
+      console.log('🧹 컴포넌트 언마운트 - 정리 시작');
+      isManualDisconnectRef.current = true;
+
+      // 이벤트 리스너 제거
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+
+      // 타이머 정리
+      clearInterval(healthCheckInterval);
+      stopHeartbeat();
+      
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
       
+      // WebSocket 정리
       if (wsRef.current) {
-        // 정상 종료 코드로 닫기
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          const exitMessage: WebSocketMessage = {
+            type: 'EXIT',
+            roomId: roomId
+          };
+          wsRef.current.send(JSON.stringify(exitMessage));
+        }
         wsRef.current.close(1000, 'Component unmounting');
         wsRef.current = null;
       }
@@ -172,6 +327,7 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
 
     try {
       wsRef.current.send(JSON.stringify(messageData));
+      lastActivityRef.current = Date.now();
       
       // 낙관적 UI 업데이트 (내 메시지는 즉시 표시)
       const newMessage: Message = {
@@ -199,6 +355,8 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
 
   // 채팅방 나가기
   const handleExitChat = () => {
+    isManualDisconnectRef.current = true;
+    
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const exitMessage: WebSocketMessage = {
         type: 'EXIT',
@@ -207,6 +365,8 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
       wsRef.current.send(JSON.stringify(exitMessage));
       wsRef.current.close(1000, 'User exit');
     }
+
+    stopHeartbeat();
 
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -229,7 +389,7 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
                   connectionStatus === 'connected' ? 'bg-green-400' : 
                   connectionStatus === 'connecting' ? 'bg-yellow-400' : 
                   'bg-red-400'
-                }`} />
+                } ${connectionStatus === 'connected' ? 'animate-pulse' : ''}`} />
                 <p className="text-xs sm:text-sm opacity-90 truncate">
                   {connectionStatus === 'connected' 
                     ? (isConnected ? '상대방과 연결됨' : '상대방이 나갔습니다')
