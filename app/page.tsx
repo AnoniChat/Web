@@ -1,6 +1,9 @@
+// ============================================
+// 1. page.tsx - WebSocket을 Chatroom에 전달
+// ============================================
 'use client';
 import api from '@/utils/api';
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { useState } from 'react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
@@ -10,7 +13,6 @@ import ChatRoom from './components/Chatroom';
 
 type Screen = 'main' | 'matching' | 'chat';
 
-// 카테고리 타입 정의
 interface Category {
   id: string;
   name: string;
@@ -25,7 +27,13 @@ interface AppState {
   queueSize: number;
 }
 
-// 카테고리 데이터
+interface WebSocketMessage {
+  type: 'MATCHING_SUCCESS' | 'HEARTBEAT' | 'CONNECTED' | 'ERROR';
+  roomId?: string;
+  content?: string;
+  message?: string;
+}
+
 const categories: Category[] = [
   { id: 'sports', name: '스포츠', icon: '🏈', displayName: '스포츠' },
   { id: 'game', name: '게임', icon: '🎮', displayName: '게임' },
@@ -37,8 +45,9 @@ const categories: Category[] = [
 ];
 
 export default function HomePage() {
-  const matchingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  // 활성 카테고리 상태 관리
+  const wsRef = useRef<WebSocket | null>(null);
+  const isManualDisconnectRef = useRef(false);
+  
   const [activeCategory, setActiveCategory] = useState<Category>(categories[0]);
   const [appState, setAppState] = useState<AppState>({
     currentScreen: 'main',
@@ -47,79 +56,122 @@ export default function HomePage() {
     queueSize: 0
   });
 
-  // 카테고리 클릭 핸들러
   const handleCategoryClick = (category: Category) => {
     setActiveCategory(category);
   };
 
-  // 채팅 시작 핸들러
-const handleStartChat = async () => {
-  try {
-    setAppState({
-      currentScreen: 'matching',
-      selectedCategory: activeCategory,
-      roomId: null,
-      queueSize:0
-    });
+  // WebSocket 연결 (한 번만 생성)
+  const connectWebSocket = () => {
+    // 이미 연결되어 있으면 재사용
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      console.log('기존 WebSocket 재사용');
+      return;
+    }
 
-    // 대기열 등록
-    const response = await api.post('/matching/queue', {
-      category: activeCategory.id,
-    });
-  
-
-        setAppState(prev => ({
-      ...prev,
-      queueSize: response.data.queueSize || 0
-    }));
-    
-    // 2단계: 매칭 상태 모니터링 시작
-    startMatchingMonitoring();
-
-  } catch (error) {
-    console.error('대기열 등록 오류:', error);
-    handleBackToMain();
-  }
-};
-
-const startMatchingMonitoring = () => {
-  const checkMatching = async () => {
     try {
-      const response = await api.get('/matching/status', {
-        params: {
-          category: activeCategory.id
+      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 
+      `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/chat`;
+      
+      console.log('WebSocket 연결 시도:', wsUrl);
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('WebSocket 연결됨');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data: WebSocketMessage = JSON.parse(event.data);
+          console.log('메시지 수신 (page.tsx):', data);
+
+          switch (data.type) {
+            case 'CONNECTED':
+              console.log('WebSocket 연결 확인:', data.message);
+              break;
+
+            case 'MATCHING_SUCCESS':
+              // ⭐ 매칭 완료 알림 - WebSocket은 유지하고 화면만 전환
+              console.log('매칭 완료! 방 ID:', data.roomId);
+              handleMatchFound(data.roomId);
+              break;
+
+            case 'HEARTBEAT':
+              // Heartbeat 응답
+              break;
+
+            case 'ERROR':
+              console.error('WebSocket 에러:', data.content);
+              break;
+
+            default:
+              console.log('알 수 없는 메시지 타입:', data);
+          }
+        } catch (error) {
+          console.error('메시지 파싱 오류:', error);
         }
-      });
+      };
 
-      const data = response.data;
+      ws.onerror = (error) => {
+        console.error('WebSocket 에러:', error);
+      };
 
-      console.log('매칭 상태 응답:', data);
-      console.log('status 값:', data.status);
-      console.log('status 타입:', typeof data.status);
-      
-      if (data.status === 'MATCHED') {
-        handleMatchFound(data.roomId);
-      } else if (data.status === 'WAITING') {
-        setAppState(prev => ({
-          ...prev,
-          queueSize: data.queueSize || 0
-        }));
-        
-        console.log('현재 대기 인원:', data.queueSize);
-        matchingTimerRef.current = setTimeout(checkMatching, 3000);
-      }
-      
+      ws.onclose = (event) => {
+        console.log('WebSocket 연결 종료:', event.code);
+        wsRef.current = null;
+      };
+
     } catch (error) {
-      console.error('매칭 상태 확인 오류:', error);
-      matchingTimerRef.current = setTimeout(checkMatching, 5000);
+      console.error('WebSocket 연결 실패:', error);
     }
   };
 
-  checkMatching();
-};
+  const disconnectWebSocket = () => {
+    isManualDisconnectRef.current = true;
+    
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close(1000, 'User initiated');
+      }
+      wsRef.current = null;
+    }
+  };
+
+  const handleStartChat = async () => {
+    try {
+      setAppState({
+        currentScreen: 'matching',
+        selectedCategory: activeCategory,
+        roomId: null,
+        queueSize: 0
+      });
+
+      // 대기열 등록
+      const response = await api.post('/matching/queue', {
+        category: activeCategory.id,
+      });
+
+      // WebSocket 연결 (없으면 생성, 있으면 재사용)
+      connectWebSocket();
+
+      setAppState(prev => ({
+        ...prev,
+        queueSize: response.data.queueSize || 0
+      }));
+
+      console.log('대기열 등록 완료:', response.data);
+
+    } catch (error) {
+      console.error('대기열 등록 오류:', error);
+      disconnectWebSocket();
+      handleBackToMain();
+    }
+  };
 
   const handleMatchFound = (roomId?: string) => {
-    console.log('매칭 완료! 방 ID:', roomId);
+    console.log('매칭 완료 처리! 방 ID:', roomId);
+    
+    // ⭐ WebSocket 유지 (종료하지 않음!)
     
     setAppState(prev => ({
       ...prev,
@@ -128,33 +180,38 @@ const startMatchingMonitoring = () => {
     }));
   };
 
-const handleBackToMain = async () => {
-  if (matchingTimerRef.current) {
-      clearTimeout(matchingTimerRef.current);
-      matchingTimerRef.current = null;
-      console.log('매칭 모니터링 중지');
-  }
+  const handleBackToMain = async () => {
+    // ⭐ WebSocket 종료
+    disconnectWebSocket();
 
-  try {
-    const response = await api.delete('/matching/cancel', {
-      params: {
-        category: activeCategory.id
+    try {
+      const response = await api.delete('/matching/cancel', {
+        params: {
+          category: activeCategory.id
+        }
+      });
+      console.log('매칭 취소 성공:', response.data);
+      
+    } catch (error) {
+      console.error('매칭 취소 중 오류 발생:', error);
+
+    } finally {
+      setAppState({
+        currentScreen: 'main',
+        selectedCategory: null,
+        roomId: null,
+        queueSize: 0
+      });
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        disconnectWebSocket();
       }
-    });
-    console.log('매칭 취소 성공:', response.data);
-    
-  } catch (error) {
-    console.error('매칭 취소 중 오류 발생:', error);
-
-  } finally {
-    setAppState({
-      currentScreen: 'main',
-      selectedCategory: null,
-      roomId: null,
-      queueSize: 0
-    });
-  }
-};
+    };
+  }, []);
 
   // 매칭 화면
   if (appState.currentScreen === 'matching') {
@@ -167,30 +224,28 @@ const handleBackToMain = async () => {
     );
   }
 
-    if (appState.currentScreen === 'chat' && appState.roomId && appState.selectedCategory) {
+  // 채팅 화면 - WebSocket을 props로 전달
+  if (appState.currentScreen === 'chat' && appState.roomId && appState.selectedCategory) {
     return (
       <ChatRoom
         roomId={appState.roomId}
         category={appState.selectedCategory}
         onExit={handleBackToMain}
+        websocket={wsRef.current}
       />
     );
   }
 
+  // 메인 화면
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-500 via-purple-500 to-indigo-600">
-      {/* 헤더 컴포넌트 */}
       <Header />
-
       <div className="flex flex-row h-screen pt-20">
-        {/* 사이드바 컴포넌트 */}
         <Sidebar 
           categories={categories}
           activeCategory={activeCategory}
           onCategoryClick={handleCategoryClick}
         />
-
-        {/* 메인 컨텐츠 컴포넌트 */}
         <MainContent 
           activeCategory={activeCategory}
           onStartChat={handleStartChat}

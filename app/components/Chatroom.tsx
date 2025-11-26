@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 interface Message {
   id: string;
@@ -17,11 +17,11 @@ interface ChatRoomProps {
     displayName: string;
   };
   onExit: () => void;
+  websocket: WebSocket | null; // ⭐ 외부에서 받은 WebSocket
 }
 
-// WebSocket 메시지 타입 정의
 interface WebSocketMessage {
-  type: 'JOIN' | 'MESSAGE' | 'EXIT' | 'DISCONNECT' | 'ERROR' | 'HEARTBEAT';
+  type: 'JOIN' | 'MESSAGE' | 'EXIT' | 'DISCONNECT' | 'ERROR' | 'HEARTBEAT' | 'MATCHING_SUCCESS';
   roomId?: string;
   content?: string;
   messageId?: string;
@@ -30,24 +30,17 @@ interface WebSocketMessage {
   isMe?: boolean;
 }
 
-export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
+export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRoomProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 5;
-  
-  // 모바일 최적화: Heartbeat 추가
+  const wsRef = useRef<WebSocket | null>(websocket); // ⭐ 외부 WebSocket 사용
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isManualDisconnectRef = useRef(false);
   const lastActivityRef = useRef<number>(Date.now());
 
-  // 메시지 자동 스크롤
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -56,9 +49,8 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
     scrollToBottom();
   }, [messages]);
 
-  // 모바일 최적화: Heartbeat 시작
-  const startHeartbeat = () => {
-    // 기존 heartbeat가 있다면 정리
+  // ⭐ useCallback으로 감싸서 메모이제이션 (ESLint 경고 해결)
+  const startHeartbeat = useCallback(() => {
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
     }
@@ -72,248 +64,173 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
         wsRef.current.send(JSON.stringify(heartbeatMessage));
         lastActivityRef.current = Date.now();
       }
-    }, 25000); // 25초마다 heartbeat 전송
-  };
+    }, 25000);
+  }, [roomId]); // roomId를 dependency에 추가
 
-  // 모바일 최적화: Heartbeat 중지
-  const stopHeartbeat = () => {
+  const stopHeartbeat = useCallback(() => {
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
       heartbeatIntervalRef.current = null;
     }
-  };
+  }, []);
 
-  // WebSocket 연결 함수
-  const connectWebSocket = () => {
-    // 수동 종료 상태면 연결하지 않음
-    if (isManualDisconnectRef.current) {
+  // ⭐ WebSocket 초기화 (외부에서 받은 것 사용)
+  useEffect(() => {
+    if (!websocket) {
+      console.error('❌ WebSocket이 전달되지 않았습니다!');
+      setConnectionStatus('disconnected');
       return;
     }
 
-    try {
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.hostname}/chat`;
-      
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+    console.log('✅ 기존 WebSocket 사용 (Chatroom)');
+    wsRef.current = websocket;
 
-      ws.onopen = () => {
-        console.log('✅ WebSocket 연결됨');
+    // 연결 상태 확인
+    if (websocket.readyState === WebSocket.OPEN) {
+      setConnectionStatus('connected');
+      setIsConnected(true);
+      
+      // 채팅방 입장 메시지 전송
+      const joinMessage: WebSocketMessage = {
+        type: 'JOIN',
+        roomId: roomId
+      };
+      websocket.send(JSON.stringify(joinMessage));
+      console.log('📨 JOIN 메시지 전송:', roomId);
+
+      startHeartbeat();
+    } else if (websocket.readyState === WebSocket.CONNECTING) {
+      setConnectionStatus('connecting');
+      
+      // 연결 완료 대기
+      websocket.addEventListener('open', () => {
         setConnectionStatus('connected');
         setIsConnected(true);
-        reconnectAttemptsRef.current = 0;
-        lastActivityRef.current = Date.now();
-
-        // 채팅방 입장 메시지 전송
+        
         const joinMessage: WebSocketMessage = {
           type: 'JOIN',
           roomId: roomId
         };
-        ws.send(JSON.stringify(joinMessage));
-
-        // 모바일 최적화: Heartbeat 시작
+        websocket.send(JSON.stringify(joinMessage));
+        
         startHeartbeat();
-      };
+      }, { once: true });
+    }
 
-      ws.onmessage = (event) => {
-        try {
-          const data: WebSocketMessage = JSON.parse(event.data);
-          lastActivityRef.current = Date.now();
-          
-          switch (data.type) {
-            case 'MESSAGE':
-              // 새 메시지 수신
-              const newMessage: Message = {
-                id: data.messageId || `msg_${Date.now()}`,
-                sender: data.isMe ? 'me' : 'other',
-                text: data.content || '',
-                timestamp: data.timestamp ? new Date(data.timestamp) : new Date()
-              };
-              if(newMessage.sender === "other"){
-                setMessages(prev => [...prev, newMessage]);
-              }
-              break;
+    // ⭐ 메시지 리스너 추가 (기존 리스너에 추가)
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const data: WebSocketMessage = JSON.parse(event.data);
+        lastActivityRef.current = Date.now();
+        
+        console.log('📨 메시지 수신 (Chatroom):', data);
+        
+        switch (data.type) {
+          case 'MESSAGE':
+            const newMessage: Message = {
+              id: data.messageId || `msg_${Date.now()}`,
+              sender: data.isMe ? 'me' : 'other',
+              text: data.content || '',
+              timestamp: data.timestamp ? new Date(data.timestamp) : new Date()
+            };
+            if (newMessage.sender === "other") {
+              setMessages(prev => [...prev, newMessage]);
+            }
+            break;
 
-            case 'DISCONNECT':
-              // 상대방이 나감
-              setIsConnected(false);
-              console.log('상대방이 채팅방을 나갔습니다');
-              break;
+          case 'DISCONNECT':
+            setIsConnected(false);
+            console.log('상대방이 채팅방을 나갔습니다');
+            break;
 
-            // 모바일 최적화: Heartbeat 응답 처리
-            case 'HEARTBEAT':
-              // Heartbeat 응답 수신 (연결 유지 확인)
-              break;
+          case 'HEARTBEAT':
+            // Heartbeat 응답
+            break;
 
-            case 'ERROR':
-              console.error('WebSocket 에러:', data.content);
-              break;
+          case 'MATCHING_SUCCESS':
+            // 매칭 알림은 page.tsx에서 이미 처리됨 (무시)
+            break;
 
-            default:
-              console.log('알 수 없는 메시지 타입:', data);
-          }
-        } catch (error) {
-          console.error('메시지 파싱 오류:', error);
+          case 'ERROR':
+            console.error('WebSocket 에러:', data.content);
+            break;
+
+          default:
+            console.log('알 수 없는 메시지 타입:', data);
         }
-      };
+      } catch (error) {
+        console.error('메시지 파싱 오류:', error);
+      }
+    };
 
-      ws.onerror = (error) => {
-        console.error('WebSocket 에러:', error);
-        setConnectionStatus('disconnected');
-      };
+    websocket.addEventListener('message', handleMessage);
 
-      ws.onclose = (event) => {
-        console.log('WebSocket 연결 종료:', event.code, event.reason);
-        setConnectionStatus('disconnected');
-        wsRef.current = null;
-
-        // 모바일 최적화: Heartbeat 중지
-        stopHeartbeat();
-
-        // 수동 종료가 아니고 비정상 종료 시 재연결 시도
-        if (!isManualDisconnectRef.current && event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
-          reconnectAttemptsRef.current += 1;
-          console.log(`🔄 재연결 시도 ${reconnectAttemptsRef.current}/${maxReconnectAttempts}`);
-          
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connectWebSocket();
-          }, 3000 * reconnectAttemptsRef.current); // 점진적 지연
-        } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-          console.error('⚠️ 최대 재연결 시도 횟수 초과');
-          setIsConnected(false);
-        }
-      };
-
-    } catch (error) {
-      console.error('WebSocket 연결 실패:', error);
+    const handleError = (error: Event) => {
+      console.error('WebSocket 에러:', error);
       setConnectionStatus('disconnected');
-    }
-  };
+    };
 
-  // 모바일 최적화: 연결 상태 확인 및 재연결
-  const checkConnectionHealth = () => {
-    // 마지막 활동으로부터 1분 이상 지났고 연결이 끊어진 경우
-    const timeSinceLastActivity = Date.now() - lastActivityRef.current;
-    if (timeSinceLastActivity > 60000 && wsRef.current?.readyState !== WebSocket.OPEN) {
-      console.log('🔄 비활성 감지, 재연결 시도');
-      connectWebSocket();
-    }
-  };
+    const handleClose = (event: CloseEvent) => {
+      console.log('WebSocket 연결 종료:', event.code, event.reason);
+      setConnectionStatus('disconnected');
+      stopHeartbeat();
+    };
 
-  // WebSocket 연결 초기화 및 모바일 이벤트 리스너
-  useEffect(() => {
-    isManualDisconnectRef.current = false;
-    connectWebSocket();
+    websocket.addEventListener('error', handleError);
+    websocket.addEventListener('close', handleClose);
 
-    // 모바일 최적화: Visibility API - 백그라운드 감지
+    // Visibility API - 백그라운드 감지
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         console.log('📱 앱이 다시 활성화됨 (Foreground)');
-        // 연결이 끊겼으면 재연결
-        if (wsRef.current?.readyState !== WebSocket.OPEN) {
-          reconnectAttemptsRef.current = 0; // 재연결 시도 횟수 초기화
-          connectWebSocket();
-        } else {
-          // 연결은 되어있지만 heartbeat 재시작
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
           startHeartbeat();
         }
-        checkConnectionHealth();
       } else {
         console.log('📱 앱이 백그라운드로 전환됨');
-        // 백그라운드에서는 heartbeat 중지 (배터리 절약)
         stopHeartbeat();
       }
     };
 
-    // 🔥 모바일 최적화: 네트워크 상태 감지
-    const handleOnline = () => {
-      console.log('🌐 네트워크 복구됨');
-      if (wsRef.current?.readyState !== WebSocket.OPEN) {
-        reconnectAttemptsRef.current = 0;
-        connectWebSocket();
-      }
-    };
-
-    const handleOffline = () => {
-      console.log('📡 네트워크 끊김');
-      setConnectionStatus('disconnected');
-    };
-
-    // 🔥 모바일 최적화: 포커스 이벤트 (브라우저 탭 전환)
     const handleFocus = () => {
       console.log('👁️ 포커스 복원');
-      if (wsRef.current?.readyState !== WebSocket.OPEN) {
-        connectWebSocket();
-      }
-      checkConnectionHealth();
     };
 
     const handleBlur = () => {
       console.log('👁️ 포커스 손실');
-      // 포커스를 잃으면 heartbeat 중지
       stopHeartbeat();
     };
 
-    // 🔥 모바일 최적화: 페이지 언로드 전 정리
-    const handleBeforeUnload = () => {
-      isManualDisconnectRef.current = true;
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+
+    // 컴포넌트 언마운트 시 정리
+    return () => {
+      console.log('🧹 Chatroom 언마운트 - 정리 시작');
+      
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+
+      stopHeartbeat();
+      
+      websocket.removeEventListener('message', handleMessage);
+      websocket.removeEventListener('error', handleError);
+      websocket.removeEventListener('close', handleClose);
+
+      // ⚠️ WebSocket은 종료하지 않음! (page.tsx에서 관리)
+      // 퇴장 메시지만 전송
+      if (websocket.readyState === WebSocket.OPEN) {
         const exitMessage: WebSocketMessage = {
           type: 'EXIT',
           roomId: roomId
         };
-        wsRef.current.send(JSON.stringify(exitMessage));
+        websocket.send(JSON.stringify(exitMessage));
       }
     };
+  }, [websocket, roomId, startHeartbeat, stopHeartbeat]); // ⭐ dependency 추가
 
-    // 이벤트 리스너 등록
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    window.addEventListener('focus', handleFocus);
-    window.addEventListener('blur', handleBlur);
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    // 🔥 모바일 최적화: 주기적 연결 상태 체크
-    const healthCheckInterval = setInterval(checkConnectionHealth, 30000); // 30초마다
-
-    // 컴포넌트 언마운트 시 정리
-    return () => {
-      console.log('🧹 컴포넌트 언마운트 - 정리 시작');
-      isManualDisconnectRef.current = true;
-
-      // 이벤트 리스너 제거
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('focus', handleFocus);
-      window.removeEventListener('blur', handleBlur);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-
-      // 타이머 정리
-      clearInterval(healthCheckInterval);
-      stopHeartbeat();
-      
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      
-      // WebSocket 정리
-      if (wsRef.current) {
-        if (wsRef.current.readyState === WebSocket.OPEN) {
-          const exitMessage: WebSocketMessage = {
-            type: 'EXIT',
-            roomId: roomId
-          };
-          wsRef.current.send(JSON.stringify(exitMessage));
-        }
-        wsRef.current.close(1000, 'Component unmounting');
-        wsRef.current = null;
-      }
-    };
-  }, [roomId]);
-
-  // 메시지 전송
   const handleSendMessage = () => {
     if (!inputMessage.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       return;
@@ -329,7 +246,6 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
       wsRef.current.send(JSON.stringify(messageData));
       lastActivityRef.current = Date.now();
       
-      // 낙관적 UI 업데이트 (내 메시지는 즉시 표시)
       const newMessage: Message = {
         id: `temp_${Date.now()}`,
         sender: 'me',
@@ -345,7 +261,6 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
     }
   };
 
-  // 엔터키로 메시지 전송
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -353,26 +268,18 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
     }
   };
 
-  // 채팅방 나가기
   const handleExitChat = () => {
-    isManualDisconnectRef.current = true;
-    
+    // ⚠️ WebSocket은 종료하지 않음! (page.tsx에서 관리)
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const exitMessage: WebSocketMessage = {
         type: 'EXIT',
         roomId: roomId
       };
       wsRef.current.send(JSON.stringify(exitMessage));
-      wsRef.current.close(1000, 'User exit');
     }
 
     stopHeartbeat();
-
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-
-    onExit();
+    onExit(); // page.tsx로 돌아감 (거기서 WebSocket 정리)
   };
 
   return (
@@ -455,7 +362,7 @@ export default function ChatRoom({ roomId, category, onExit }: ChatRoomProps) {
         {/* WebSocket 연결 끊김 알림 */}
         {connectionStatus === 'disconnected' && (
           <div className="bg-red-100 text-red-800 px-4 sm:px-6 py-2 sm:py-3 text-center text-xs sm:text-sm flex-shrink-0">
-            서버와의 연결이 끊어졌습니다. 재연결 시도 중...
+            서버와의 연결이 끊어졌습니다.
           </div>
         )}
 
