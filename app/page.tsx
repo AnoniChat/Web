@@ -64,7 +64,7 @@ export default function HomePage() {
   const connectWebSocket = () => {
     // 이미 연결되어 있으면 재사용
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      console.log('기존 WebSocket 재사용');
+
       return;
     }
 
@@ -72,27 +72,22 @@ export default function HomePage() {
       const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 
       `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/chat`;
       
-      console.log('WebSocket 연결 시도:', wsUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('WebSocket 연결됨');
       };
 
       ws.onmessage = (event) => {
         try {
           const data: WebSocketMessage = JSON.parse(event.data);
-          console.log('메시지 수신 (page.tsx):', data);
 
           switch (data.type) {
             case 'CONNECTED':
-              console.log('WebSocket 연결 확인:', data.message);
               break;
 
             case 'MATCHING_SUCCESS':
               // ⭐ 매칭 완료 알림 - WebSocket은 유지하고 화면만 전환
-              console.log('매칭 완료! 방 ID:', data.roomId);
               handleMatchFound(data.roomId);
               break;
 
@@ -101,7 +96,6 @@ export default function HomePage() {
               break;
 
             case 'ERROR':
-              console.error('WebSocket 에러:', data.content);
               break;
 
             default:
@@ -117,7 +111,6 @@ export default function HomePage() {
       };
 
       ws.onclose = (event) => {
-        console.log('WebSocket 연결 종료:', event.code);
         wsRef.current = null;
       };
 
@@ -159,7 +152,6 @@ export default function HomePage() {
         queueSize: response.data.queueSize || 0
       }));
 
-      console.log('대기열 등록 완료:', response.data);
 
     } catch (error) {
       console.error('대기열 등록 오류:', error);
@@ -169,7 +161,6 @@ export default function HomePage() {
   };
 
   const handleMatchFound = (roomId?: string) => {
-    console.log('매칭 완료 처리! 방 ID:', roomId);
     
     // ⭐ WebSocket 유지 (종료하지 않음!)
     
@@ -190,7 +181,6 @@ export default function HomePage() {
           category: activeCategory.id
         }
       });
-      console.log('매칭 취소 성공:', response.data);
       
     } catch (error) {
       console.error('매칭 취소 중 오류 발생:', error);

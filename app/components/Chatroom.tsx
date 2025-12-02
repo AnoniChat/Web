@@ -77,12 +77,11 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
   // ⭐ WebSocket 초기화 (외부에서 받은 것 사용)
   useEffect(() => {
     if (!websocket) {
-      console.error('❌ WebSocket이 전달되지 않았습니다!');
+      console.error('WebSocket이 전달되지 않았습니다!');
       setConnectionStatus('disconnected');
       return;
     }
 
-    console.log('✅ 기존 WebSocket 사용 (Chatroom)');
     wsRef.current = websocket;
 
     // 연결 상태 확인
@@ -96,7 +95,6 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
         roomId: roomId
       };
       websocket.send(JSON.stringify(joinMessage));
-      console.log('📨 JOIN 메시지 전송:', roomId);
 
       startHeartbeat();
     } else if (websocket.readyState === WebSocket.CONNECTING) {
@@ -117,13 +115,11 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
       }, { once: true });
     }
 
-    // ⭐ 메시지 리스너 추가 (기존 리스너에 추가)
+    // 메시지 리스너 추가 (기존 리스너에 추가)
     const handleMessage = (event: MessageEvent) => {
       try {
         const data: WebSocketMessage = JSON.parse(event.data);
         lastActivityRef.current = Date.now();
-        
-        console.log('📨 메시지 수신 (Chatroom):', data);
         
         switch (data.type) {
           case 'MESSAGE':
@@ -140,7 +136,6 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
 
           case 'DISCONNECT':
             setIsConnected(false);
-            console.log('상대방이 채팅방을 나갔습니다');
             break;
 
           case 'HEARTBEAT':
@@ -171,7 +166,6 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
     };
 
     const handleClose = (event: CloseEvent) => {
-      console.log('WebSocket 연결 종료:', event.code, event.reason);
       setConnectionStatus('disconnected');
       stopHeartbeat();
     };
@@ -182,22 +176,18 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
     // Visibility API - 백그라운드 감지
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        console.log('📱 앱이 다시 활성화됨 (Foreground)');
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           startHeartbeat();
         }
       } else {
-        console.log('📱 앱이 백그라운드로 전환됨');
         stopHeartbeat();
       }
     };
 
     const handleFocus = () => {
-      console.log('👁️ 포커스 복원');
     };
 
     const handleBlur = () => {
-      console.log('👁️ 포커스 손실');
       stopHeartbeat();
     };
 
@@ -207,7 +197,6 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
 
     // 컴포넌트 언마운트 시 정리
     return () => {
-      console.log('🧹 Chatroom 언마운트 - 정리 시작');
       
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
@@ -269,7 +258,7 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
   };
 
   const handleExitChat = () => {
-    // ⚠️ WebSocket은 종료하지 않음! (page.tsx에서 관리)
+    // WebSocket은 종료하지 않음 (page.tsx에서 관리)
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const exitMessage: WebSocketMessage = {
         type: 'EXIT',
