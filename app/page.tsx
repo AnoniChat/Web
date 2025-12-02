@@ -1,6 +1,3 @@
-// ============================================
-// 1. page.tsx - WebSocket을 Chatroom에 전달
-// ============================================
 'use client';
 import api from '@/utils/api';
 import { useRef, useEffect } from 'react';
@@ -111,6 +108,7 @@ export default function HomePage() {
       };
 
       ws.onclose = (event) => {
+        console.log('WebSocket 연결 종료:', event.code);
         wsRef.current = null;
       };
 
@@ -181,6 +179,7 @@ export default function HomePage() {
           category: activeCategory.id
         }
       });
+      console.log('매칭 취소 성공:', response.data);
       
     } catch (error) {
       console.error('매칭 취소 중 오류 발생:', error);

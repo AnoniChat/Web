@@ -166,6 +166,7 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
     };
 
     const handleClose = (event: CloseEvent) => {
+      console.log('WebSocket 연결 종료:', event.code, event.reason);
       setConnectionStatus('disconnected');
       stopHeartbeat();
     };
