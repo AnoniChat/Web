@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Category } from '@/utils/categories';
 
 interface Message {
   id: string;
@@ -10,14 +11,9 @@ interface Message {
 
 interface ChatRoomProps {
   roomId: string;
-  category: {
-    id: string;
-    name: string;
-    icon: string;
-    displayName: string;
-  };
+  category: Category;  // ✅ 수정: 인라인 타입 대신 Category 타입 사용
   onExit: () => void;
-  websocket: WebSocket | null; // ⭐ 외부에서 받은 WebSocket
+  websocket: WebSocket | null;
 }
 
 interface WebSocketMessage {

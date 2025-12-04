@@ -1,11 +1,6 @@
 'use client';
 
-interface Category {
-  id: string;
-  name: string;
-  icon: string;
-  displayName: string;
-}
+import { Category } from '@/utils/categories';
 
 interface SidebarProps {
   categories: Category[];
