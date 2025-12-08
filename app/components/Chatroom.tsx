@@ -11,7 +11,7 @@ interface Message {
 
 interface ChatRoomProps {
   roomId: string;
-  category: Category;  // ✅ 수정: 인라인 타입 대신 Category 타입 사용
+  category: Category;
   onExit: () => void;
   websocket: WebSocket | null;
 }
@@ -45,7 +45,6 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
     scrollToBottom();
   }, [messages]);
 
-  // ⭐ useCallback으로 감싸서 메모이제이션 (ESLint 경고 해결)
   const startHeartbeat = useCallback(() => {
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
@@ -61,7 +60,7 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
         lastActivityRef.current = Date.now();
       }
     }, 25000);
-  }, [roomId]); // roomId를 dependency에 추가
+  }, [roomId]);
 
   const stopHeartbeat = useCallback(() => {
     if (heartbeatIntervalRef.current) {
@@ -70,7 +69,6 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
     }
   }, []);
 
-  // ⭐ WebSocket 초기화 (외부에서 받은 것 사용)
   useEffect(() => {
     if (!websocket) {
       console.error('WebSocket이 전달되지 않았습니다!');
@@ -147,7 +145,6 @@ export default function ChatRoom({ roomId, category, onExit, websocket }: ChatRo
             break;
 
           default:
-            console.log('알 수 없는 메시지 타입:', data);
         }
       } catch (error) {
         console.error('메시지 파싱 오류:', error);

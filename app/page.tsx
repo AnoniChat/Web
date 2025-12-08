@@ -1,11 +1,12 @@
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import MatchingQueue from './components/MatchingQueue';
 import ChatRoom from './components/Chatroom';
+import { isMobileDevice} from '@/utils/device';
 
 // 🔒 보안: 중앙화된 카테고리 관리
 import { 
@@ -40,7 +41,9 @@ interface WebSocketMessage {
 export default function HomePage() {
   const wsRef = useRef<WebSocket | null>(null);
   const isManualDisconnectRef = useRef(false);
-  
+  const isCleaningUpRef = useRef(false); // 중복 요청 방지
+  const hasHistoryEntryRef = useRef(false); 
+
   const [activeCategory, setActiveCategory] = useState<Category>(CATEGORIES[0]);
   const [appState, setAppState] = useState<AppState>({
     currentScreen: 'main',
@@ -60,63 +63,91 @@ export default function HomePage() {
     }
   };
 
-  // WebSocket 연결
-  const connectWebSocket = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      return;
-    }
+  // WebSocket 연결 (Promise 반환)
+  const connectWebSocket = (): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        console.log('[WebSocket] 이미 연결됨');
+        resolve();
+        return;
+      }
 
-    try {
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 
-        `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/chat`;
-      
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      try {
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 
+          `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/chat`;
+        
+        console.log('[WebSocket] 연결 시도:', wsUrl);
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
 
-      ws.onopen = () => {
-        console.log('[WebSocket] 연결됨');
-      };
+        let isResolved = false;
 
-      ws.onmessage = (event) => {
-        try {
-          const data: WebSocketMessage = JSON.parse(event.data);
+        ws.onopen = () => {
+          
+          setTimeout(() => {
+            if (!isResolved) {
+              isResolved = true;
+              resolve();
+            }
+          }, 500);
+        };
 
-          switch (data.type) {
-            case 'CONNECTED':
-              console.log('[WebSocket] 서버 연결 확인');
-              break;
+        ws.onmessage = (event) => {
+          try {
+            const data: WebSocketMessage = JSON.parse(event.data);
 
-            case 'MATCHING_SUCCESS':
-              handleMatchFound(data.roomId);
-              break;
+            switch (data.type) {
+              case 'CONNECTED':
+                if (!isResolved) {
+                  isResolved = true;
+                  resolve();
+                }
+                break;
 
-            case 'HEARTBEAT':
-              break;
+              case 'MATCHING_SUCCESS':
+                handleMatchFound(data.roomId);
+                break;
 
-            case 'ERROR':
-              console.error('[WebSocket] 서버 에러:', data.message);
-              break;
+              case 'HEARTBEAT':
+                break;
 
-            default:
-              console.log('[WebSocket] 알 수 없는 메시지:', data);
+              case 'ERROR':
+                console.error('[WebSocket] 서버 에러:', data.message);
+                break;
+
+              default:
+            }
+          } catch (error) {
+            console.error('[WebSocket] 메시지 파싱 오류:', error);
+            console.error('[WebSocket] 원본 데이터:', event.data);
           }
-        } catch (error) {
-          console.error('[WebSocket] 메시지 파싱 오류:', error);
-        }
-      };
+        };
 
-      ws.onerror = (error) => {
-        console.error('[WebSocket] 에러:', error);
-      };
+        ws.onerror = (error) => {
+          console.error('[WebSocket] 연결 에러:', error);
+          if (!isResolved) {
+            reject(error);
+          }
+        };
 
-      ws.onclose = (event) => {
-        console.log('[WebSocket] 연결 종료:', event.code);
-        wsRef.current = null;
-      };
+        ws.onclose = (event) => {
+          console.log('[WebSocket] 연결 종료 :', event);
+          wsRef.current = null;
+        };
 
-    } catch (error) {
-      console.error('[WebSocket] 연결 실패:', error);
-    }
+        // 타임아웃 설정 (10초)
+        setTimeout(() => {
+          if (!isResolved) {
+            console.error('[WebSocket] 연결 타임아웃');
+            reject(new Error('WebSocket 연결 타임아웃'));
+          }
+        }, 10000);
+
+      } catch (error) {
+        console.error('[WebSocket] 연결 실패:', error);
+        reject(error);
+      }
+    });
   };
 
   const disconnectWebSocket = () => {
@@ -130,41 +161,181 @@ export default function HomePage() {
     }
   };
 
-  // 🔒 보안: 채팅 시작 시 카테고리 검증 및 안전한 API 호출
+  // 매칭 취소 API 호출 (fetch + keepalive 사용)
+  const cancelMatchingKeepalive = useCallback((category: Category) => {
+    // 중복 호출 방지
+    if (isCleaningUpRef.current) {
+      return;
+    }
+    isCleaningUpRef.current = true;
+
+    if (!isValidCategory(category)) {
+      return;
+    }
+
+    const apiUrl = `${process.env.NEXT_PUBLIC_API_URL}/matching/cancel?category=${category.id}`;
+    
+    // fetch + keepalive: true 사용
+    fetch(apiUrl, {
+      method: 'DELETE',
+      credentials: 'include',
+      keepalive: true, // 핵심: 페이지가 닫혀도 요청 완료 보장
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+      .catch((err) => {
+        console.error('[Keepalive] 매칭 취소 요청 전송 실패:', err);
+      });
+  }, []);
+
+  // 보안: 매칭 취소 시 안전한 API 호출
+  const handleBackToMain = useCallback(async () => {
+    disconnectWebSocket();
+
+    try {
+      if (activeCategory && isValidCategory(activeCategory) && !isCleaningUpRef.current) {
+        await cancelMatching(activeCategory.id);
+      }
+      
+    } catch (error) {
+      console.error('[Matching] 매칭 취소 중 오류:', error);
+    } finally {
+      isCleaningUpRef.current = false;
+            hasHistoryEntryRef.current = false;
+      setAppState({
+        currentScreen: 'main',
+        selectedCategory: null,
+        roomId: null,
+        queueSize: 0
+      });
+    }
+  }, [activeCategory]); // activeCategory 의존성 추가
+
+  // 브라우저 종료/새로고침/탭 닫기 감지
+  useEffect(() => {
+    const isMobile = isMobileDevice();
+
+    const handleBeforeUnload = (_e: BeforeUnloadEvent) => {
+      // 매칭 중이거나 채팅 중일 때만 실행
+      if (appState.currentScreen === 'matching' || appState.currentScreen === 'chat') {
+        
+        if (activeCategory && isValidCategory(activeCategory)) {
+          cancelMatchingKeepalive(activeCategory);
+        }
+        
+        disconnectWebSocket();
+        
+        _e.preventDefault();
+        _e.returnValue = '매칭이 진행 중입니다. 페이지를 나가시겠습니까?';
+      }
+    };
+
+    // pagehide 이벤트 (모바일 대응 - iOS Safari)
+    const handlePageHide = () => {
+      if (appState.currentScreen === 'matching' || appState.currentScreen === 'chat') {
+        
+        if (activeCategory && isValidCategory(activeCategory)) {
+          cancelMatchingKeepalive(activeCategory);
+        }
+        
+        disconnectWebSocket();
+      }
+    };
+
+    // visibilitychange 이벤트 (백그라운드 전환 - 추가 안전장치)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        if (appState.currentScreen === 'matching' || appState.currentScreen === 'chat') {
+          
+          if (activeCategory && isValidCategory(activeCategory)) {
+            cancelMatchingKeepalive(activeCategory);
+          }
+        }
+      } else {
+        // 다시 보일 때 cleanup flag 리셋
+        isCleaningUpRef.current = false;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    if(isMobile){
+      window.addEventListener('pagehide', handlePageHide);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if(isMobile){
+        window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [appState.currentScreen, activeCategory, cancelMatchingKeepalive]);
+
+  useEffect(() => {
+    const handlePopState = async (event: PopStateEvent) => {
+      
+      // 매칭 중이거나 채팅 중일 때
+      if (appState.currentScreen === 'matching' || appState.currentScreen === 'chat') {
+        if (event.state?.screen === 'app-navigation') {
+          await handleBackToMain();
+        } else {
+          window.history.pushState(
+            { screen: 'app-navigation' }, 
+            '', 
+            window.location.pathname
+          );
+          await handleBackToMain();
+        }
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [appState.currentScreen, handleBackToMain]);
+
+  // 보안: 채팅 시작 시 카테고리 검증 및 안전한 API 호출
   const handleStartChat = async () => {
     try {
-      // 1단계: 카테고리 유효성 재검증
+      
       if (!isValidCategory(activeCategory)) {
         throw new Error('유효하지 않은 카테고리입니다.');
       }
 
-      // 2단계: UI 상태 변경 (매칭 화면으로 전환)
+      // cleanup flag 리셋
+      isCleaningUpRef.current = false;
+
+      if (!hasHistoryEntryRef.current) {
+        window.history.pushState(
+          { screen: 'app-navigation' }, 
+          '', 
+          window.location.pathname
+        );
+        hasHistoryEntryRef.current = true;
+      }
+
       setAppState({
         currentScreen: 'matching',
         selectedCategory: activeCategory,
         roomId: null,
         queueSize: 0
       });
-
-      // 3단계: 보안이 강화된 API 함수 사용 (검증 내장)
       const response = await registerMatchingQueue(activeCategory.id);
 
-      // 4단계: WebSocket 연결
-      connectWebSocket();
+      await connectWebSocket();
 
-      // 5단계: 대기열 크기 업데이트
       setAppState(prev => ({
         ...prev,
         queueSize: response.queueSize || 0
       }));
 
-      console.log('[Matching] 대기열 등록 성공:', response);
-
-    } catch (error) {
-      console.error('[Matching] 대기열 등록 오류:', error);
-      
+    } catch (error) {;
+      console.error('[Matching] 매칭 오류:', error);
       disconnectWebSocket();
-      
       alert(
         error instanceof Error 
           ? error.message 
@@ -176,35 +347,16 @@ export default function HomePage() {
   };
 
   const handleMatchFound = (roomId?: string) => {
-    console.log('[Matching] 매칭 성공! RoomID:', roomId);
+    // cleanup flag 리셋 (새로운 채팅 세션)
+    isCleaningUpRef.current = false;
+    
+    const finalRoomId = roomId || `room_${Date.now()}`;
     
     setAppState(prev => ({
       ...prev,
       currentScreen: 'chat',
-      roomId: roomId || `room_${Date.now()}`
+      roomId: finalRoomId
     }));
-  };
-
-  // 🔒 보안: 매칭 취소 시 안전한 API 호출
-  const handleBackToMain = async () => {
-    disconnectWebSocket();
-
-    try {
-      if (activeCategory && isValidCategory(activeCategory)) {
-        await cancelMatching(activeCategory.id);
-        console.log('[Matching] 매칭 취소 성공');
-      }
-      
-    } catch (error) {
-      console.error('[Matching] 매칭 취소 중 오류:', error);
-    } finally {
-      setAppState({
-        currentScreen: 'main',
-        selectedCategory: null,
-        roomId: null,
-        queueSize: 0
-      });
-    }
   };
 
   // Cleanup
